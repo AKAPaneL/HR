@@ -1,85 +1,70 @@
+// 导出一个axios的实例  而且这个实例要有请求拦截器 响应拦截器
 import axios from 'axios'
-import { MessageBox, Message } from 'element-ui'
-import store from '@/store'
-import { getToken } from '@/utils/auth'
+import { Message } from 'element-ui'
+import store from '../store'
+import { getTime } from './auth'
+import router from '../router'
 
-// create an axios instance
 const service = axios.create({
   baseURL: process.env.VUE_APP_BASE_API, // url = base url + request url
   // withCredentials: true, // send cookies when cross-domain requests
-  timeout: 5000 // request timeout
-})
+  timeout: 5000 // 超时时间
+}) // 创建一个axios的实例
 
-// request interceptor
-service.interceptors.request.use(
-  config => {
-    // do something before request is sent
-
-    if (store.getters.token) {
-      // let each request carry token
-      // ['X-Token'] is a custom headers key
-      // please modify it according to the actual situation
-      config.headers['X-Token'] = getToken()
+service.interceptors.request.use((config) => {
+  // 非常重要，要记得return config;
+  // 给所有请求增加token
+  // 读取token，导入vuex
+  const { token } = store.state.user
+  // 有token才添加
+  if (token) {
+    // 检查token是否过期
+    // 当前时间 - token获取时间，判断它是否大于有效期
+    // 设置默认有效期：1个小时
+    const validTime = 3600 * 1000
+    if (Date.now() - getTime() > validTime) {
+      // token失效
+      // 调用退出登录action: 删除token，删除用户信息
+      store.dispatch('user/logout')
+      // 跳转登录页面
+      router.push('/login')
+      return Promise.reject(new Error('token失效'))
     }
-    return config
-  },
-  error => {
-    // do something with request error
-    console.log(error) // for debug
-    return Promise.reject(error)
+    config.headers.Authorization = `Bearer ${token}`
   }
-)
-
-// response interceptor
-service.interceptors.response.use(
-  /**
-   * If you want to get http information such as headers or status
-   * Please return  response => response
-  */
-
-  /**
-   * Determine the request status by custom code
-   * Here is just an example
-   * You can also judge the status by HTTP Status Code
-   */
-  response => {
-    const res = response.data
-
-    // if the custom code is not 20000, it is judged as an error.
-    if (res.code !== 20000) {
-      Message({
-        message: res.message || 'Error',
-        type: 'error',
-        duration: 5 * 1000
-      })
-
-      // 50008: Illegal token; 50012: Other clients logged in; 50014: Token expired;
-      if (res.code === 50008 || res.code === 50012 || res.code === 50014) {
-        // to re-login
-        MessageBox.confirm('You have been logged out, you can cancel to stay on this page, or log in again', 'Confirm logout', {
-          confirmButtonText: 'Re-Login',
-          cancelButtonText: 'Cancel',
-          type: 'warning'
-        }).then(() => {
-          store.dispatch('user/resetToken').then(() => {
-            location.reload()
-          })
-        })
-      }
-      return Promise.reject(new Error(res.message || 'Error'))
-    } else {
-      return res
-    }
-  },
-  error => {
-    console.log('err' + error) // for debug
-    Message({
-      message: error.message,
-      type: 'error',
-      duration: 5 * 1000
-    })
-    return Promise.reject(error)
+  return config
+}) // 请求拦截器
+service.interceptors.response.use((response) => {
+  // 2xx状态码
+  // success：成功/失败
+  // message：服务器返回的消息
+  // data服务器返回的数据
+  const { success, message, data } = response.data
+  if (success) {
+    return data
+  } else {
+    // 提示用户错误消息
+    Message.error(message)
+    // 返回一个错误
+    return Promise.reject(new Error(message))
   }
-)
+}, (error) => {
+  // 非2xx状态码
+  // 处理token失效
+  const { code, message } = error.response.data
 
-export default service
+  // 如果有报错信息，提示给用户
+  if (message) {
+    Message.error(message)
+  }
+
+  // 判断token失效
+  if (code === 10002) {
+    store.dispatch('user/logout')
+    // 跳转登录页面
+    router.push('/login')
+  }
+  return Promise.reject(error)
+}) // 响应拦截器
+
+export default service // 导出axios实例
